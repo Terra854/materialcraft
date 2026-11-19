@@ -61,8 +61,8 @@ fn finish(positions: Vec<Vec3>, normals: Option<Vec<Vec3>>, uvs: Vec<Vec2>, indi
     Mesh::from_parts(positions, normals, uvs, indices, "material").map_err(|e| bad(e.to_string()))
 }
 
-/// `mesh` as Wavefront OBJ text: positions, texture coordinates, normals and triangles
-pub fn obj_text(mesh: &Mesh) -> String {
+/// `mesh` as Wavefront OBJ text, or an error if the shared writer refuses it.
+pub fn obj_text(mesh: &Mesh) -> Result<String> {
     let (textured, shaded) = (mesh.uvs.len() == mesh.positions.len(), mesh.normals.len() == mesh.positions.len());
     let corners = mesh
         .indices
@@ -84,7 +84,7 @@ pub fn obj_text(mesh: &Mesh) -> String {
         ..craft_mesh::Mesh::default()
     };
     let scene = craft_mesh::Scene::from_meshes(vec![shared], Vec::new());
-    craft_mesh::obj::write(&scene, None, &limits()).unwrap_or_default()
+    craft_mesh::obj::write(&scene, None, &limits()).map_err(|error| bad(format!("OBJ export: {error}")))
 }
 
 /// Parse a mesh file by extension.
@@ -254,10 +254,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn obj_writer_refusal_is_returned() {
+        let mut mesh = materialcraft_geom::primitives::cube(1.0);
+        mesh.indices[0] = u32::try_from(mesh.positions.len()).unwrap();
+
+        assert!(matches!(obj_text(&mesh), Err(FormatError::BadPackage(message)) if message.contains("a corner index is out of range")));
+    }
+
+    #[test]
     fn a_mesh_written_as_obj_loads_back_as_it_was() {
         let mesh = materialcraft_geom::primitives::torus(1.0, 0.35, 12, 6);
 
-        let loaded = load_mesh("torus.obj", obj_text(&mesh).as_bytes()).unwrap();
+        let loaded = load_mesh("torus.obj", obj_text(&mesh).unwrap().as_bytes()).unwrap();
 
         assert_eq!((loaded.triangle_count(), loaded.vertex_count()), (mesh.triangle_count(), mesh.vertex_count()));
 
