@@ -118,13 +118,28 @@ pub fn encode(image: &Image, ext: &str, depth: Depth, srgb: bool) -> Result<Vec<
     }
     .map_err(|e| FormatError::Image(e.to_string()))?;
 
-    let opts = EncodeOptions { embed_icc: false, embed_metadata: false, ..EncodeOptions::default() };
+    // Match the JPEG quality and RGB sampling used before the shared encoder cutover.
+    let opts = EncodeOptions { jpeg_quality: 75, jpeg_chroma_subsampling: false, embed_icc: false, embed_metadata: false, ..EncodeOptions::default() };
     craft_image_codecs::encode(&codec_image, format, &opts).map_err(|e| FormatError::Image(e.to_string()))
 }
 
 #[cfg(test)]
 mod transfer_tests {
     use super::*;
+
+    #[test]
+    fn jpeg_export_keeps_quality_and_full_chroma_defaults() {
+        let texture = Image::filled(16, 16, Kind::Color, [0.5, 0.25, 0.75, 1.0]);
+        for extension in ["jpg", "jpeg"] {
+            let jpeg = encode(&texture, extension, Depth::U8, true).unwrap();
+
+            // SOF0 for a 16 × 16, 8-bit, three-component baseline JPEG.
+            let prefix = [0xff, 0xc0, 0, 17, 8, 0, 16, 0, 16, 3];
+            let frame = jpeg.windows(19).find(|segment| segment.starts_with(&prefix)).unwrap();
+            let sampling = [frame[11], frame[14], frame[17]];
+            assert_eq!((craft_image_codecs::jpeg_quality(&jpeg), sampling), (Some(75), [0x11; 3]), "{extension}");
+        }
+    }
 
     #[test]
     fn grayscale_png_round_trips_selected_transfer() {
@@ -157,7 +172,7 @@ mod transfer_tests {
         let jpeg = encode(&color, "jpg", Depth::U8, true).unwrap();
         assert!(!jpeg.windows(4).any(|w| w == b"Exif" || w == b"ICC_"));
         let decoded = decode(&jpeg, false).unwrap();
-        assert_eq!((decoded.width, decoded.height), (2, 2));
+        assert_eq!((decoded.width(), decoded.height()), (2, 2));
 
         assert!(encode(&color, "psd", Depth::U8, true).is_err());
         assert!(decode(b"not an image", false).is_err());
